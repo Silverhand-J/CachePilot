@@ -39,6 +39,11 @@
 GET http://localhost:8080/test/stat/record?bizType=product&bizKey=12345
 ```
 
+**请求说明：**
+- `bizType=product`：指定业务类型为商品（product）
+- `bizKey=12345`：指定具体的业务键值为 12345
+- 该请求会在 Redis 中记录一次访问，并返回当前统计结果
+
 **响应示例：**
 
 ```json
@@ -51,6 +56,12 @@ GET http://localhost:8080/test/stat/record?bizType=product&bizKey=12345
   "redisKey60s": "stat:product:12345:60s"
 }
 ```
+
+**响应说明：**
+- `count1s`：最近 1 秒内的访问次数
+- `count60s`：最近 60 秒内的访问次数
+- `redisKey1s`：1 秒统计窗口在 Redis 中的键名
+- `redisKey60s`：60 秒统计窗口在 Redis 中的键名
 
 ---
 
@@ -74,6 +85,11 @@ GET http://localhost:8080/test/stat/record?bizType=product&bizKey=12345
 GET http://localhost:8080/test/stat/batch?bizType=product&bizKey=12345&count=100
 ```
 
+**请求说明：**
+- `count=100`：连续记录 100 次访问
+- 用于模拟高并发场景，测试统计服务的性能
+- 可用于观察访问计数器的累加效果
+
 **响应示例：**
 
 ```json
@@ -87,6 +103,12 @@ GET http://localhost:8080/test/stat/batch?bizType=product&bizKey=12345&count=100
   "avgLatencyMs": 4.5
 }
 ```
+
+**响应说明：**
+- `recordCount`：实际记录的访问次数（应等于请求参数 count）
+- `count1s` / `count60s`：最终的统计计数结果
+- `durationMs`：批量记录耗时（毫秒）
+- `avgLatencyMs`：平均每次记录的延迟（总耗时 ÷ 记录次数）
 
 ---
 
@@ -113,6 +135,10 @@ GET http://localhost:8080/test/stat/batch?bizType=product&bizKey=12345&count=100
 GET http://localhost:8080/test/hotspot/detect?bizType=product&bizKey=12345
 ```
 
+**请求说明：**
+- 该请求会先记录一次访问统计，然后基于统计结果识别热点等级
+- 综合测试了访问统计和热点识别两个模块
+
 **响应示例：**
 
 ```json
@@ -126,6 +152,13 @@ GET http://localhost:8080/test/hotspot/detect?bizType=product&bizKey=12345
   "threshold": 5
 }
 ```
+
+**响应说明：**
+- `countShort`：短时间窗口（1秒）内的访问次数
+- `countLong`：长时间窗口（60秒）内的访问次数
+- `hotspotLevel`：识别出的热点等级（COLD/WARM/HOT/EXTREMELY_HOT）
+- `hotspotDescription`：热点等级的详细描述
+- `threshold`：当前热点等级对应的阈值上限
 
 ---
 
@@ -149,6 +182,11 @@ GET http://localhost:8080/test/hotspot/detect?bizType=product&bizKey=12345
 GET http://localhost:8080/test/hotspot/simulate?bizType=product&bizKey=12345&scenario=HOT
 ```
 
+**请求说明：**
+- `scenario=HOT`：指定要模拟的热点场景为 HOT（高频热点）
+- 系统会自动生成符合该场景的访问次数（HOT 场景为 25 次）
+- 用于验证热点识别算法的准确性
+
 **响应示例：**
 
 ```json
@@ -166,6 +204,13 @@ GET http://localhost:8080/test/hotspot/simulate?bizType=product&bizKey=12345&sce
 }
 ```
 
+**响应说明：**
+- `simulateCount`：为达到目标场景而生成的访问次数
+- `detectedLevel`：实际检测到的热点等级
+- `expectedLevel`：期望的热点等级（等于请求的 scenario）
+- `matched`：检测结果是否与预期匹配（true 表示识别正确）
+- `durationMs`：模拟过程总耗时
+
 ---
 
 ### 2.3 查看热点阈值
@@ -181,6 +226,10 @@ GET http://localhost:8080/test/hotspot/simulate?bizType=product&bizKey=12345&sce
 ```bash
 GET http://localhost:8080/test/hotspot/thresholds
 ```
+
+**请求说明：**
+- 该接口不需要参数，直接返回系统配置的热点阈值
+- 用于了解热点等级的判定标准
 
 **响应示例：**
 
@@ -204,6 +253,14 @@ GET http://localhost:8080/test/hotspot/thresholds
   }
 }
 ```
+
+**响应说明：**
+- `threshold`：热点等级的阈值上限（访问次数/秒）
+- 热点等级判定规则：
+  - 访问次数 < 5 → COLD（冷数据）
+  - 5 ≤ 访问次数 < 20 → WARM（温数据）
+  - 20 ≤ 访问次数 < 100 → HOT（热数据）
+  - 访问次数 ≥ 100 → EXTREMELY_HOT（极热数据）
 
 ---
 
@@ -230,6 +287,10 @@ GET http://localhost:8080/test/hotspot/thresholds
 GET http://localhost:8080/test/strategy/full?bizType=product&bizKey=12345
 ```
 
+**请求说明：**
+- 该接口测试完整的三段流程：访问统计 → 热点识别 → 策略决策
+- 展示了从原始访问到最终缓存策略的完整转换过程
+
 **响应示例：**
 
 ```json
@@ -247,6 +308,14 @@ GET http://localhost:8080/test/strategy/full?bizType=product&bizKey=12345
   }
 }
 ```
+
+**响应说明：**
+- `statResult`：访问统计结果（第一阶段输出）
+- `hotspotLevel`：热点识别结果（第二阶段输出）
+- `decision`：策略决策结果（第三阶段输出）
+  - `cacheMode`：推荐的缓存模式
+  - `ttlLevel`：推荐的 TTL 等级
+- 示例中因为访问次数为 1（COLD），所以决策为不使用缓存（NONE）
 
 ---
 
@@ -268,6 +337,11 @@ GET http://localhost:8080/test/strategy/full?bizType=product&bizKey=12345
 GET http://localhost:8080/test/strategy/decide?level=HOT
 ```
 
+**请求说明：**
+- `level=HOT`：直接指定热点等级为 HOT
+- 跳过统计和识别环节，直接测试策略决策引擎
+- 用于验证不同热点等级对应的缓存策略
+
 **响应示例：**
 
 ```json
@@ -278,6 +352,14 @@ GET http://localhost:8080/test/strategy/decide?level=HOT
   "description": "本地缓存 + Redis 双层缓存，长 TTL"
 }
 ```
+
+**响应说明：**
+- `inputLevel`：输入的热点等级（回显）
+- `cacheMode`：决策的缓存模式
+  - HOT 等级 → 使用双层缓存（本地 + Redis）
+- `ttlLevel`：决策的 TTL 等级
+  - HOT 等级 → 使用长 TTL，减少回源频率
+- `description`：决策结果的人类可读描述
 
 ---
 
@@ -294,6 +376,10 @@ GET http://localhost:8080/test/strategy/decide?level=HOT
 ```bash
 GET http://localhost:8080/test/strategy/mappings
 ```
+
+**请求说明：**
+- 该接口展示完整的热点等级到缓存策略的映射关系
+- 用于理解系统的策略决策规则
 
 **响应示例：**
 
@@ -322,6 +408,12 @@ GET http://localhost:8080/test/strategy/mappings
 }
 ```
 
+**响应说明（策略设计思路）：**
+- **COLD**：访问频率低，直接回源，避免缓存污染
+- **WARM**：中等频率，使用 Redis 集中缓存，节省本地内存
+- **HOT**：高频访问，使用双层缓存，本地缓存提供极速响应
+- **EXTREMELY_HOT**：突发流量，仅用本地缓存，避免 Redis 压力过大
+
 ---
 
 ### 3.4 模拟场景测试
@@ -343,6 +435,12 @@ GET http://localhost:8080/test/strategy/mappings
 ```bash
 GET http://localhost:8080/test/strategy/simulate?bizType=product&bizKey=12345&scenario=HOT
 ```
+
+**请求说明：**
+- `bizType=product`：指定业务类型为商品
+- `bizKey=12345`：指定业务键为 12345
+- `scenario=HOT`：指定要模拟的热点场景为 HOT（高频热点）
+- 系统会自动生成 25 次访问（达到 HOT 阈值）来模拟该场景
 
 **响应示例：**
 
@@ -366,6 +464,22 @@ GET http://localhost:8080/test/strategy/simulate?bizType=product&bizKey=12345&sc
   "durationMs": 130
 }
 ```
+
+**响应说明：**
+- `scenario`：请求的模拟场景（回显）
+- `simulateCount`：为达到该场景生成的访问次数
+- `bizType`：业务类型（回显）
+- `bizKey`：业务键（回显）
+- `statResult`：访问统计结果
+  - `countShort`：短期窗口（1秒）的访问计数
+  - `countLong`：长期窗口（60秒）的访问计数
+- `detectedLevel`：实际检测到的热点等级
+- `decision`：策略决策结果
+  - `cacheMode`：推荐的缓存模式
+  - `ttlLevel`：推荐的 TTL 等级
+  - `description`：决策的详细描述
+- `matched`：检测结果是否与预期场景匹配
+- `durationMs`：模拟过程总耗时（毫秒）
 
 ---
 
@@ -393,6 +507,12 @@ GET http://localhost:8080/test/strategy/simulate?bizType=product&bizKey=12345&sc
 GET http://localhost:8080/test/cache/access?key=product:12345&mode=LOCAL_AND_REMOTE&ttl=NORMAL
 ```
 
+**请求说明：**
+- `key=product:12345`：要访问的缓存键
+- `mode=LOCAL_AND_REMOTE`：使用双层缓存模式
+- `ttl=NORMAL`：使用普通 TTL
+- 首次访问会触发 DB 回源，并将数据写入缓存
+
 **响应示例：**
 
 ```json
@@ -406,6 +526,15 @@ GET http://localhost:8080/test/cache/access?key=product:12345&mode=LOCAL_AND_REM
   "durationMs": 52
 }
 ```
+
+**响应说明：**
+- `key`：请求的缓存键（回显）
+- `value`：实际获取到的数据值
+- `cacheMode`：使用的缓存模式（回显）
+- `ttlLevel`：使用的 TTL 等级（回显）
+- `dbCalled`：本次请求是否触发了 DB 回源（true=缓存未命中）
+- `totalDbCalls`：累计的 DB 访问次数（用于统计缓存效果）
+- `durationMs`：本次请求总耗时（包括缓存查询和可能的 DB 查询）
 
 ---
 
@@ -429,6 +558,11 @@ GET http://localhost:8080/test/cache/access?key=product:12345&mode=LOCAL_AND_REM
 GET http://localhost:8080/test/cache/hit-test?key=product:99999&mode=LOCAL_AND_REMOTE&count=10
 ```
 
+**请求说明：**
+- `count=10`：连续访问同一个 key 10 次
+- 用于测试缓存命中率和性能
+- 理想情况：第1次未命中回源，后9次全部命中缓存
+
 **响应示例：**
 
 ```json
@@ -443,6 +577,16 @@ GET http://localhost:8080/test/cache/hit-test?key=product:99999&mode=LOCAL_AND_R
   "avgLatencyMs": 6.5
 }
 ```
+
+**响应说明：**
+- `key`：测试的缓存键（回显）
+- `cacheMode`：使用的缓存模式（回显）
+- `totalAccess`：总访问次数（应等于请求参数 count）
+- `dbCalls`：实际的 DB 访问次数（理想情况为 1）
+- `cacheHits`：缓存命中次数（totalAccess - dbCalls）
+- `hitRate`：缓存命中率百分比
+- `durationMs`：总耗时（毫秒）
+- `avgLatencyMs`：平均每次访问延迟（命中缓存时延迟更低）
 
 ---
 
@@ -464,6 +608,11 @@ GET http://localhost:8080/test/cache/hit-test?key=product:99999&mode=LOCAL_AND_R
 DELETE http://localhost:8080/test/cache/invalidate?key=product:12345
 ```
 
+**请求说明：**
+- `key=product:12345`：指定要失效的缓存键
+- 使用 DELETE 方法，表明是删除操作
+- 会同时清除本地缓存和 Redis 中的数据
+
 **响应示例：**
 
 ```json
@@ -473,6 +622,11 @@ DELETE http://localhost:8080/test/cache/invalidate?key=product:12345
   "durationMs": 3
 }
 ```
+
+**响应说明：**
+- `key`：被失效的缓存键（回显）
+- `action`：执行的操作类型（invalidated=已失效）
+- `durationMs`：失效操作耗时（毫秒）
 
 ---
 
@@ -493,6 +647,11 @@ DELETE http://localhost:8080/test/cache/invalidate?key=product:12345
 ```bash
 GET http://localhost:8080/test/cache/compare?key=test:performance
 ```
+
+**请求说明：**
+- `key=test:performance`：指定测试用的缓存键
+- 系统会对同一个 key 使用所有缓存模式各进行两次访问
+- 用于对比不同缓存模式的性能差异
 
 **响应示例：**
 
@@ -521,6 +680,18 @@ GET http://localhost:8080/test/cache/compare?key=test:performance
 }
 ```
 
+**响应说明：**
+每个缓存模式包含以下性能指标：
+- `firstAccessNs`：第一次访问耗时（纳秒），通常未命中缓存需要回源
+- `secondAccessNs`：第二次访问耗时（纳秒），应该命中缓存（NONE 除外）
+- `speedup`：性能提升倍数（第一次耗时 ÷ 第二次耗时）
+
+各模式性能分析：
+- **NONE**：无缓存，两次耗时接近，speedup 约为 1x
+- **LOCAL_ONLY**：本地缓存最快，speedup 约 26x
+- **REMOTE_ONLY**：Redis 缓存，有网络开销，speedup 约 5x
+- **LOCAL_AND_REMOTE**：双层缓存，第二次命中本地缓存，speedup 约 34x
+
 ---
 
 ### 4.5 并发访问测试
@@ -543,6 +714,13 @@ GET http://localhost:8080/test/cache/compare?key=test:performance
 GET http://localhost:8080/test/cache/concurrent?key=product:hot&threads=5&iterations=20
 ```
 
+**请求说明：**
+- `key=product:hot`：并发访问的目标缓存键
+- `threads=5`：启动 5 个并发线程
+- `iterations=20`：每个线程各访问 20 次
+- 总访问次数 = threads × iterations = 100 次
+- 用于测试高并发场景下的缓存性能和线程安全性
+
 **响应示例：**
 
 ```json
@@ -558,6 +736,17 @@ GET http://localhost:8080/test/cache/concurrent?key=product:hot&threads=5&iterat
   "qps": 408
 }
 ```
+
+**响应说明：**
+- `key`：测试的缓存键（回显）
+- `threads`：并发线程数（回显）
+- `iterationsPerThread`：每个线程的迭代次数（回显）
+- `totalAccess`：总访问次数（threads × iterationsPerThread）
+- `dbCalls`：实际的 DB 访问次数（理想情况为 1）
+- `cacheHits`：缓存命中次数（totalAccess - dbCalls）
+- `hitRate`：缓存命中率百分比
+- `durationMs`：并发测试总耗时（毫秒）
+- `qps`：每秒查询数（totalAccess × 1000 ÷ durationMs）
 
 ---
 
@@ -575,6 +764,10 @@ GET http://localhost:8080/test/cache/concurrent?key=product:hot&threads=5&iterat
 POST http://localhost:8080/test/cache/reset
 ```
 
+**请求说明：**
+- 该接口无需参数
+- 用于重置测试环境，清除之前的 DB 访问计数
+
 **响应示例：**
 
 ```json
@@ -583,6 +776,10 @@ POST http://localhost:8080/test/cache/reset
   "currentCount": 0
 }
 ```
+
+**响应说明：**
+- `previousCount`：重置前的 DB 访问计数
+- `currentCount`：重置后的计数（始终为 0）
 
 ---
 
@@ -609,6 +806,11 @@ POST http://localhost:8080/test/cache/reset
 GET http://localhost:8080/test/e2e/full?bizType=product&bizKey=12345
 ```
 
+**请求说明：**
+- 该接口测试完整的端到端流程（四大模块集成）
+- 流程：访问统计 → 热点识别 → 策略决策 → 缓存访问
+- 提供一个真实的回源函数（模拟 DB 查询）
+
 **响应示例：**
 
 ```json
@@ -622,6 +824,13 @@ GET http://localhost:8080/test/e2e/full?bizType=product&bizKey=12345
   "durationMs": 58
 }
 ```
+
+**响应说明：**
+- `value`：最终获取到的数据（可能来自缓存或 DB）
+- `hotspotLevel`：系统识别出的热点等级
+- `dbCalled`：本次是否触发 DB 回源
+- `totalDbCalls`：累计 DB 访问次数（用于评估缓存效果）
+- `durationMs`：端到端总耗时（包含所有模块处理时间）
 
 ---
 
@@ -643,6 +852,11 @@ GET http://localhost:8080/test/e2e/full?bizType=product&bizKey=12345
 ```bash
 GET http://localhost:8080/test/e2e/hotspot-evolution?bizType=product&bizKey=99999
 ```
+
+**请求说明：**
+- 该接口模拟热点数据的演化过程
+- 通过逐步增加访问次数，观察热点等级的动态变化
+- 演化路径：COLD → WARM → HOT → EXTREMELY_HOT
 
 **响应示例：**
 
@@ -676,6 +890,14 @@ GET http://localhost:8080/test/e2e/hotspot-evolution?bizType=product&bizKey=9999
 }
 ```
 
+**响应说明：**
+- `evolution`：热点等级演化过程数组
+- 每个阶段包含：
+  - `accessCount`：累计访问次数
+  - `hotspotLevel`：当前识别出的热点等级
+- 演化过程展示了系统如何根据访问频率动态调整缓存策略
+- 用于验证热点识别的阈值设置是否合理
+
 ---
 
 ### 5.3 缓存命中率测试
@@ -698,6 +920,12 @@ GET http://localhost:8080/test/e2e/hotspot-evolution?bizType=product&bizKey=9999
 GET http://localhost:8080/test/e2e/cache-hit-rate?bizType=product&bizKey=88888&count=100
 ```
 
+**请求说明：**
+- `bizType=product`：指定业务类型
+- `bizKey=88888`：指定业务键
+- `count=100`：连续访问 100 次
+- 用于测试端到端流程的缓存效果和性能
+
 **响应示例：**
 
 ```json
@@ -713,6 +941,17 @@ GET http://localhost:8080/test/e2e/cache-hit-rate?bizType=product&bizKey=88888&c
   "avgLatencyMs": "5.20"
 }
 ```
+
+**响应说明：**
+- `bizType`：业务类型（回显）
+- `bizKey`：业务键（回显）
+- `totalAccess`：总访问次数（应等于请求参数 count）
+- `dbCalls`：实际 DB 访问次数（理想情况为 1）
+- `cacheHits`：缓存命中次数（totalAccess - dbCalls）
+- `hitRate`：缓存命中率百分比
+- `hotspotLevel`：系统识别出的热点等级（因访问频繁可能升级为 EXTREMELY_HOT）
+- `durationMs`：总耗时（毫秒）
+- `avgLatencyMs`：平均每次访问延迟（durationMs ÷ totalAccess）
 
 ---
 
@@ -737,6 +976,14 @@ GET http://localhost:8080/test/e2e/cache-hit-rate?bizType=product&bizKey=88888&c
 GET http://localhost:8080/test/e2e/concurrent?bizType=product&bizKey=77777&threads=10&iterations=50
 ```
 
+**请求说明：**
+- `bizType=product`：指定业务类型
+- `bizKey=77777`：指定业务键
+- `threads=10`：启动 10 个并发线程
+- `iterations=50`：每个线程执行 50 次迭代
+- 总访问次数 = 10 × 50 = 500 次
+- 测试端到端流程在高并发场景下的表现
+
 **响应示例：**
 
 ```json
@@ -753,6 +1000,18 @@ GET http://localhost:8080/test/e2e/concurrent?bizType=product&bizKey=77777&threa
   "qps": 400
 }
 ```
+
+**响应说明：**
+- `bizType`：业务类型（回显）
+- `bizKey`：业务键（回显）
+- `threads`：并发线程数（回显）
+- `iterationsPerThread`：每线程迭代次数（回显）
+- `totalAccess`：总访问次数（threads × iterationsPerThread）
+- `dbCalls`：实际 DB 访问次数
+- `cacheHits`：缓存命中次数（totalAccess - dbCalls）
+- `hitRate`：缓存命中率百分比
+- `durationMs`：并发测试总耗时（毫秒）
+- `qps`：每秒查询数（totalAccess × 1000 ÷ durationMs）
 
 ---
 
@@ -774,6 +1033,10 @@ GET http://localhost:8080/test/e2e/concurrent?bizType=product&bizKey=77777&threa
 DELETE http://localhost:8080/test/e2e/invalidate?bizKey=12345
 ```
 
+**请求说明：**
+- `bizKey=12345`：指定要失效的业务键
+- 该操作会清除缓存并同时清除模拟数据库中的数据
+
 **响应示例：**
 
 ```json
@@ -783,6 +1046,11 @@ DELETE http://localhost:8080/test/e2e/invalidate?bizKey=12345
   "durationMs": 5
 }
 ```
+
+**响应说明：**
+- `bizKey`：被失效的业务键（回显）
+- `action`：执行的操作（invalidated=已失效）
+- `durationMs`：失效操作耗时（毫秒）
 
 ---
 
@@ -800,6 +1068,11 @@ DELETE http://localhost:8080/test/e2e/invalidate?bizKey=12345
 POST http://localhost:8080/test/e2e/reset
 ```
 
+**请求说明：**
+- 该接口无需参数
+- 重置所有测试状态，包括 DB 计数器和模拟数据库
+- 用于开始新一轮测试前的环境清理
+
 **响应示例：**
 
 ```json
@@ -809,6 +1082,11 @@ POST http://localhost:8080/test/e2e/reset
   "status": "reset"
 }
 ```
+
+**响应说明：**
+- `previousDbCalls`：重置前的累计 DB 访问次数
+- `previousDbSize`：重置前模拟数据库中的数据条数
+- `status`：操作状态（reset=已重置）
 
 ---
 
