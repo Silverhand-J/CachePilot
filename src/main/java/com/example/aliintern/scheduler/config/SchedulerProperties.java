@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
  * 配置前缀：scheduler
  * 
  * 包含模块：
+ * - 限流模块（rateLimit）
  * - 访问统计模块（stat）
  * - 热点识别模块（hotspot）
  * - 策略决策引擎（decision）
@@ -19,6 +20,11 @@ import org.springframework.stereotype.Component;
 @Component
 @ConfigurationProperties(prefix = "scheduler")
 public class SchedulerProperties {
+
+    /**
+     * 限流模块配置
+     */
+    private final RateLimitConfig rateLimit = new RateLimitConfig();
 
     /**
      * 访问统计模块配置
@@ -39,6 +45,91 @@ public class SchedulerProperties {
      * 缓存访问代理配置（TTL 映射）
      */
     private final CacheConfig cache = new CacheConfig();
+
+    // ==================== 限流模块配置 ====================
+    
+    /**
+     * 限流模块配置
+     * 配置前缀：scheduler.rate-limit
+     * 
+     * 本模块是调度系统的"第一道防线"，用于保护系统免受突发流量冲击。
+     * 位于访问统计模块之前，不参与热点识别或缓存调度决策。
+     */
+    @Data
+    public static class RateLimitConfig {
+        
+        // ========== 开关配置 ==========
+        
+        /**
+         * 是否启用全局限流
+         * 保护整体系统，默认开启
+         */
+        private Boolean enableGlobalLimit = true;
+        
+        /**
+         * 是否启用 bizType 限流
+         * 不同业务隔离，默认开启
+         */
+        private Boolean enableBizTypeLimit = true;
+        
+        /**
+         * 是否启用 bizKey 限流
+         * 防止单 Key 被打爆，默认开启
+         */
+        private Boolean enableBizKeyLimit = true;
+        
+        // ========== 阈值配置 ==========
+        
+        /**
+         * 全局 QPS 限流阈值
+         * 默认 10000 QPS
+         */
+        private Integer globalQpsLimit = 10000;
+        
+        /**
+         * 单个 bizType QPS 限流阈值
+         * 默认 5000 QPS
+         */
+        private Integer bizTypeQpsLimit = 5000;
+        
+        /**
+         * 单个 bizKey QPS 限流阈值
+         * 默认 1000 QPS（防止热 Key 打爆）
+         */
+        private Integer bizKeyQpsLimit = 1000;
+        
+        // ========== 窗口配置 ==========
+        
+        /**
+         * 限流时间窗口（秒）
+         * 默认 1 秒（即 QPS 限流）
+         */
+        private Long windowSeconds = 1L;
+        
+        // ========== Redis Key 配置 ==========
+        
+        /**
+         * 限流 Key 前缀
+         * Key 格式：{keyPrefix}:{dimension}:{bizType}:{bizKey}:{window}
+         */
+        private String keyPrefix = "ratelimit";
+        
+        // ========== 容错配置 ==========
+        
+        /**
+         * Redis 不可用时的降级策略
+         * true = fail-open（默认放行）
+         * false = fail-closed（拒绝）
+         * 默认 true，优先保证系统可用性
+         */
+        private Boolean failOpen = true;
+        
+        /**
+         * Redis 操作超时时间（毫秒）
+         * 防止 Redis 慢查询阻塞线程
+         */
+        private Integer redisTimeout = 100;
+    }
 
     // ==================== 访问统计模块配置 ====================
     

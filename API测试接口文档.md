@@ -13,6 +13,7 @@
 3. [StrategyTestController - 策略决策引擎测试](#3-strategytestcontroller---策略决策引擎测试)
 4. [CacheProxyTestController - 缓存访问代理测试](#4-cacheproxytestcontroller---缓存访问代理测试)
 5. [EndToEndTestController - 端到端测试](#5-endtoendtestcontroller---端到端测试)
+6. [RateLimitTestController - 限流测试](#6-ratelimittestcontroller---限流测试)
 
 ---
 
@@ -1087,6 +1088,220 @@ POST http://localhost:8080/test/e2e/reset
 - `previousDbCalls`：重置前的累计 DB 访问次数
 - `previousDbSize`：重置前模拟数据库中的数据条数
 - `status`：操作状态（reset=已重置）
+
+---
+
+## 6. RateLimitTestController - 限流测试
+
+**基础路径：** `/test/ratelimit`
+
+### 6.1 单次限流测试
+
+**接口地址：** `GET /test/ratelimit/acquire`
+
+**描述：** 对单次请求进行限流判断，验证当前限流规则是否生效。
+
+**请求参数：**
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+|--------|------|------|--------|------|
+| bizType | String | 否 | order | 业务类型（如：order、product、user），用于 bizType 维度限流 |
+| bizKey | String | 否 | sku_001 | 业务键（如：商品ID、用户ID），用于 bizKey 维度限流 |
+
+**请求示例：**
+
+```bash
+GET http://localhost:8080/test/ratelimit/acquire?bizType=order&bizKey=sku_001
+```
+
+**请求说明：**
+- 如果未超出任一维度限流阈值，请求将被允许通过。
+- 如果超过全局 / bizType / bizKey 任一维度的限流阈值，将返回 HTTP 429，并在响应体中给出详细原因。
+
+**成功响应示例（未触发限流）：**
+
+```json
+{
+  "bizType": "order",
+  "bizKey": "sku_001",
+  "allowed": true,
+  "costMs": 2,
+  "message": "Request allowed"
+}
+```
+
+**成功响应说明：**
+- `allowed`：是否通过限流检查（true=通过）。
+- `costMs`：本次限流检查耗时（毫秒）。
+- `message`：结果描述信息。
+
+**限流触发响应示例（HTTP 429）：**
+
+```json
+{
+  "bizType": "order",
+  "bizKey": "sku_001",
+  "allowed": false,
+  "dimension": "GLOBAL",
+  "currentCount": 12000,
+  "limit": 10000,
+  "message": "Rate limit exceeded: dimension=GLOBAL, bizType=null, bizKey=null, current=12000, limit=10000"
+}
+```
+
+**限流触发响应说明：**
+- `dimension`：触发限流的维度（GLOBAL/BIZ_TYPE/BIZ_KEY）。
+- `currentCount`：当前窗口内的实际请求数。
+- `limit`：对应维度的限流阈值。
+- `message`：详细的错误描述，便于排查问题。
+
+---
+
+### 6.2 并发压力测试
+
+**接口地址：** `GET /test/ratelimit/pressure`
+
+**描述：** 模拟高并发请求场景，统计通过/拒绝/异常的数量和整体 QPS，用于评估限流策略在高压场景下的表现。
+
+**请求参数：**
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+|--------|------|------|--------|------|
+| bizType | String | 否 | order | 业务类型，用于 bizType 限流维度 |
+| bizKey | String | 否 | sku_001 | 业务键，用于 bizKey 限流维度 |
+| concurrency | Integer | 否 | 10 | 并发线程数 |
+| requests | Integer | 否 | 100 | 每个线程发送的请求数 |
+
+**请求示例：**
+
+```bash
+GET "http://localhost:8080/test/ratelimit/pressure?bizType=order&bizKey=sku_001&concurrency=20&requests=500"
+```
+
+**请求说明：**
+- 总请求数 = `concurrency × requests`。
+- 所有请求都会针对同一个 `bizType + bizKey` 组合，便于观察 bizKey 限流效果。
+
+**响应示例：**
+
+```json
+{
+  "bizType": "order",
+  "bizKey": "sku_001",
+  "totalRequests": 10000,
+  "concurrency": 20,
+  "allowedCount": 9500,
+  "rejectedCount": 500,
+  "errorCount": 0,
+  "durationMs": 1200,
+  "qps": 8333.33,
+  "rejectRate": "5.00%"
+}
+```
+
+**响应说明：**
+- `totalRequests`：本次压测发送的总请求数（concurrency × requests）。
+- `allowedCount`：通过限流检查的请求数量。
+- `rejectedCount`：被限流拒绝的请求数量。
+- `errorCount`：发生非限流异常的请求数量。
+- `durationMs`：整个压测过程耗时（毫秒）。
+- `qps`：本次压测期间的平均 QPS。
+- `rejectRate`：拒绝率百分比（rejectedCount ÷ totalRequests）。
+
+---
+
+### 6.3 查看限流配置
+
+**接口地址：** `GET /test/ratelimit/config`
+
+**描述：** 查看当前限流模块的配置，包括各维度开关、QPS 阈值、窗口大小、Redis 容错策略等。
+
+**请求参数：** 无
+
+**请求示例：**
+
+```bash
+GET http://localhost:8080/test/ratelimit/config
+```
+
+**响应示例：**
+
+```json
+{
+  "enableGlobalLimit": true,
+  "enableBizTypeLimit": true,
+  "enableBizKeyLimit": true,
+  "globalQpsLimit": 10000,
+  "bizTypeQpsLimit": 5000,
+  "bizKeyQpsLimit": 1000,
+  "windowSeconds": 1,
+  "keyPrefix": "ratelimit",
+  "failOpen": true,
+  "redisTimeout": 100
+}
+```
+
+**响应说明：**
+- `enableGlobalLimit`：是否启用全局 QPS 限流。
+- `enableBizTypeLimit`：是否启用 bizType 维度限流。
+- `enableBizKeyLimit`：是否启用 bizKey 维度限流。
+- `globalQpsLimit`：全局 QPS 限流阈值。
+- `bizTypeQpsLimit`：单个 bizType 的 QPS 限流阈值。
+- `bizKeyQpsLimit`：单个 bizKey 的 QPS 限流阈值。
+- `windowSeconds`：限流统计窗口时长（秒）。
+- `keyPrefix`：限流统计在 Redis 中使用的 Key 前缀。
+- `failOpen`：Redis 异常时是否走 fail-open（true=默认放行，false=默认拒绝）。
+- `redisTimeout`：限流相关 Redis 操作的超时时间（毫秒）。
+
+---
+
+### 6.4 测试限流维度
+
+**接口地址：** `GET /test/ratelimit/dimensions`
+
+**描述：** 分别验证三种限流维度（GLOBAL / BIZ_TYPE / BIZ_KEY）是否生效，辅助检查配置是否正确。
+
+**请求参数：** 无
+
+**请求示例：**
+
+```bash
+GET http://localhost:8080/test/ratelimit/dimensions
+```
+
+**响应示例：**
+
+```json
+{
+  "globalDimension": {
+    "allowed": 45,
+    "rejected": 5
+  },
+  "bizTypeDimension": {
+    "bizType": "test_biz_type_1707734521234",
+    "allowed": 48,
+    "rejected": 2
+  },
+  "bizKeyDimension": {
+    "bizKey": "test_biz_key_1707734521234",
+    "allowed": 47,
+    "rejected": 3
+  }
+}
+```
+
+**响应说明：**
+- `globalDimension`：全局维度限流的测试结果。
+  - `allowed`：在全局维度下被允许的请求数。
+  - `rejected`：在全局维度下被拒绝的请求数。
+- `bizTypeDimension`：bizType 维度限流的测试结果。
+  - `bizType`：本次测试使用的业务类型标识。
+  - `allowed`：在该 bizType 下被允许的请求数。
+  - `rejected`：在该 bizType 下被拒绝的请求数。
+- `bizKeyDimension`：bizKey 维度限流的测试结果。
+  - `bizKey`：本次测试使用的业务键标识。
+  - `allowed`：在该 bizKey 下被允许的请求数。
+  - `rejected`：在该 bizKey 下被拒绝的请求数。
 
 ---
 

@@ -21,22 +21,32 @@ flowchart TD
     Gateway[API / BFF / Gateway]
 
     subgraph Scheduler["调度层（核心）"]
+        RL[限流模块]
         AM[访问统计模块]
         HM[热点识别模块]
         DE[策略决策引擎]
+        DM[调度执行模块]
     end
 
-    DB[(MySQL)]
-    Redis[(Redis)]
+    subgraph CacheLayer["缓存层"]
+        LC[Caffeine 本地缓存]
+        RC[(Redis)]
+    end
 
     Client --> Gateway
-    Gateway --> AM
+    Gateway --> RL
+
+    RL -->|通过| AM
+    RL -->|拒绝| Gateway
 
     AM --> HM
     HM --> DE
 
-    DE --> Redis
-    DE --> DB
+    DE --> DM
+
+    DM --> LC
+    DM --> RC
+
 ```
 
 * 访问统计模块：**在全局范围内对有缓存潜力的请求 key进行低成本、高并发的访问频次统计**，为后续热点识别和缓存决策提供客观数据依据（一段时间内某个key 被反复访问的强度与趋势）。

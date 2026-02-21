@@ -1,65 +1,39 @@
 package com.example.aliintern.scheduler.statistics.impl;
 
 import com.example.aliintern.scheduler.common.model.StatResult;
+import com.example.aliintern.scheduler.common.redis.RedisCounterException;
+import com.example.aliintern.scheduler.common.redis.RedisCounterExecutor;
 import com.example.aliintern.scheduler.config.SchedulerProperties;
 import com.example.aliintern.scheduler.statistics.AccessStatisticsService;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
-import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * 访问统计模块实现
- * 使用Redis + Lua脚本实现高并发、原子性的访问计数
+ * 使用 RedisCounterExecutor 统一计数层实现高并发、原子性的访问计数
  * 
  * 设计要点：
  * 1. 双窗口统计：短窗口（瞬时热点）+ 长窗口（稳定热度）
  * 2. Key格式：{keyPrefix}:{bizType}:{bizKey}:{window}
- * 3. 使用Lua脚本保证INCR + EXPIRE的原子性
+ * 3. 使用 RedisCounterExecutor 批量执行，消除重复 Lua 逻辑
  * 4. 不使用本地内存，支持多实例部署
  * 5. 完整的容错机制：超时、重试、降级
+ * 
+ * 性能优化：
+ * - 原来：2 次 Redis 调用（shortWindow + longWindow）
+ * - 现在：1 次 Redis 调用（批量执行）
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class RedisAccessStatisticsService implements AccessStatisticsService {
 
-    private final StringRedisTemplate redisTemplate;
+    private final RedisCounterExecutor redisCounterExecutor;
     private final SchedulerProperties schedulerProperties;
-
-    /**
-     * Redis Lua脚本：原子性执行 INCR + 条件 EXPIRE
-     * 
-     * 逻辑：
-     * 1. 对key执行INCR
-     * 2. 如果是第一次递增（count == 1），设置过期时间
-     * 3. 返回当前计数值
-     */
-    private static final String INCR_WITH_EXPIRE_SCRIPT = 
-            "local count = redis.call('INCR', KEYS[1]) " +
-            "if count == 1 then " +
-            "    redis.call('EXPIRE', KEYS[1], ARGV[1]) " +
-            "end " +
-            "return count";
-
-    private DefaultRedisScript<Long> incrWithExpireScript;
-
-    @PostConstruct
-    public void init() {
-        // 初始化Lua脚本
-        incrWithExpireScript = new DefaultRedisScript<>();
-        incrWithExpireScript.setScriptText(INCR_WITH_EXPIRE_SCRIPT);
-        incrWithExpireScript.setResultType(Long.class);
-        
-        SchedulerProperties.StatConfig config = schedulerProperties.getStat();
-        log.info("访问统计模块初始化完成 - 配置: shortWindow={}s, longWindow={}s, keyPrefix={}, redisTimeout={}ms", 
-                config.getShortWindowSeconds(), config.getLongWindowSeconds(), 
-                config.getKeyPrefix(), config.getRedisTimeout());
-    }
 
     @Override
     public StatResult record(String bizType, String bizKey) {
@@ -71,23 +45,31 @@ public class RedisAccessStatisticsService implements AccessStatisticsService {
         SchedulerProperties.StatConfig config = schedulerProperties.getStat();
 
         try {
-            // 构建双窗口的Redis Key
+            // 构建双窗口的 Redis Key
             String keyShort = buildStatKey(bizType, bizKey, formatWindowKey(config.getShortWindowSeconds()));
             String keyLong = buildStatKey(bizType, bizKey, config.getLongWindowSeconds() + "s");
 
             // 计算过期时间（向上取整）
-            int ttlShort = (int) Math.ceil(config.getShortWindowSeconds());
-            int ttlLong = config.getLongWindowSeconds();
+            long ttlShort = (long) Math.ceil(config.getShortWindowSeconds());
+            long ttlLong = config.getLongWindowSeconds().longValue();
 
-            // 执行Lua脚本更新计数（原子操作）
-            Long countShort = executeIncrWithExpire(keyShort, ttlShort);
-            Long countLong = executeIncrWithExpire(keyLong, ttlLong);
+            // 构建批量执行 Map
+            Map<String, Long> keyTtlMap = new LinkedHashMap<>();
+            keyTtlMap.put(keyShort, ttlShort);
+            keyTtlMap.put(keyLong, ttlLong);
+
+            // 批量执行（一次 Redis 调用）
+            Map<String, Long> results = redisCounterExecutor.batchIncrement(keyTtlMap);
+
+            Long countShort = results.get(keyShort);
+            Long countLong = results.get(keyLong);
 
             log.debug("访问统计记录完成: bizType={}, bizKey={}, countShort={}, countLong={}", 
                     bizType, bizKey, countShort, countLong);
 
             return StatResult.of(countShort, countLong);
-        } catch (Exception e) {
+            
+        } catch (RedisCounterException e) {
             log.error("访问统计记录失败: bizType={}, bizKey={}, error={}", 
                     bizType, bizKey, e.getMessage(), e);
             
@@ -110,22 +92,6 @@ public class RedisAccessStatisticsService implements AccessStatisticsService {
             return seconds.intValue() + "s";
         }
         return seconds + "s";
-    }
-
-    /**
-     * 执行带过期时间的原子递增操作
-     *
-     * @param key Redis Key
-     * @param ttl 过期时间（秒）
-     * @return 递增后的计数值
-     */
-    private Long executeIncrWithExpire(String key, int ttl) {
-        Long result = redisTemplate.execute(
-                incrWithExpireScript,
-                Collections.singletonList(key),
-                String.valueOf(ttl)
-        );
-        return result != null ? result : 0L;
     }
 
     /**

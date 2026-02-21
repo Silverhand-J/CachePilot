@@ -18,6 +18,12 @@ public class RequestContext {
     private String requestId;
 
     /**
+     * 业务类型（如 order, inventory, user）
+     * 用于限流和统计的业务隔离
+     */
+    private String bizType;
+
+    /**
      * 缓存键（如 skuId）
      */
     private String cacheKey;
