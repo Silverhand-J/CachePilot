@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.*;
 
 /**
  * 基于 RedisCounterExecutor 的限流服务实现
@@ -23,6 +24,7 @@ import java.util.Map;
  * - 支持批量限流检查（一次 Redis 调用）
  * - 支持三个限流维度：全局 / bizType / bizKey
  * - 支持开关控制和容错降级
+ * - 支持超时控制（redis-timeout 配置）
  * 
  * Key 格式：
  * - 全局：{prefix}:global:{window}
@@ -47,6 +49,11 @@ public class DefaultRateLimiterService implements RateLimiterService {
 
     private final RedisCounterExecutor redisCounterExecutor;
     private final SchedulerProperties schedulerProperties;
+    
+    /**
+     * 线程池用于异步执行 Redis 操作（支持超时控制）
+     */
+    private final ExecutorService executor = Executors.newCachedThreadPool();
 
     /**
      * 获取限流配置
@@ -58,6 +65,51 @@ public class DefaultRateLimiterService implements RateLimiterService {
     @Override
     public void acquire(String bizType, String bizKey) throws RateLimitExceededException {
         RateLimitConfig config = getConfig();
+        
+        try {
+            // 使用超时控制执行限流检查
+            doAcquireWithTimeout(bizType, bizKey, config);
+        } catch (TimeoutException e) {
+            log.error("限流检查超时: bizType={}, bizKey={}, timeout={}ms", 
+                    bizType, bizKey, config.getRedisTimeout());
+            handleRedisFailure();
+        } catch (RateLimitExceededException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("限流检查异常: bizType={}, bizKey={}, error={}", 
+                    bizType, bizKey, e.getMessage());
+            handleRedisFailure();
+        }
+    }
+    
+    /**
+     * 执行带超时控制的限流检查
+     */
+    private void doAcquireWithTimeout(String bizType, String bizKey, RateLimitConfig config) 
+            throws TimeoutException, ExecutionException, InterruptedException, RateLimitExceededException {
+        
+        CompletableFuture<Void> future = CompletableFuture.runAsync(
+                () -> doAcquire(bizType, bizKey, config), executor);
+        
+        try {
+            // 使用配置的超时时间
+            future.get(config.getRedisTimeout(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            throw e;
+        } catch (ExecutionException e) {
+            // 如果是 RateLimitExceededException，重新抛出
+            if (e.getCause() instanceof RateLimitExceededException) {
+                throw (RateLimitExceededException) e.getCause();
+            }
+            throw e;
+        }
+    }
+    
+    /**
+     * 实际执行限流检查
+     */
+    private void doAcquire(String bizType, String bizKey, RateLimitConfig config) {
         long windowSeconds = config.getWindowSeconds();
 
         // 构建需要检查的所有维度的 Key
@@ -110,7 +162,7 @@ public class DefaultRateLimiterService implements RateLimiterService {
         } catch (RedisCounterException e) {
             // Redis 异常，按配置决定行为
             log.error("Redis error during rate limit check: {}", e.getMessage());
-            handleRedisFailure();
+            throw new RuntimeException("Redis error", e);
         }
     }
 

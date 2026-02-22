@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.*;
 
 /**
  * 访问统计模块实现
@@ -34,6 +35,11 @@ public class RedisAccessStatisticsService implements AccessStatisticsService {
 
     private final RedisCounterExecutor redisCounterExecutor;
     private final SchedulerProperties schedulerProperties;
+    
+    /**
+     * 线程池用于异步执行 Redis 操作（支持超时控制）
+     */
+    private final ExecutorService executor = Executors.newCachedThreadPool();
 
     @Override
     public StatResult record(String bizType, String bizKey) {
@@ -43,44 +49,79 @@ public class RedisAccessStatisticsService implements AccessStatisticsService {
         }
 
         SchedulerProperties.StatConfig config = schedulerProperties.getStat();
-
-        try {
-            // 构建双窗口的 Redis Key
-            String keyShort = buildStatKey(bizType, bizKey, formatWindowKey(config.getShortWindowSeconds()));
-            String keyLong = buildStatKey(bizType, bizKey, config.getLongWindowSeconds() + "s");
-
-            // 计算过期时间（向上取整）
-            long ttlShort = (long) Math.ceil(config.getShortWindowSeconds());
-            long ttlLong = config.getLongWindowSeconds().longValue();
-
-            // 构建批量执行 Map
-            Map<String, Long> keyTtlMap = new LinkedHashMap<>();
-            keyTtlMap.put(keyShort, ttlShort);
-            keyTtlMap.put(keyLong, ttlLong);
-
-            // 批量执行（一次 Redis 调用）
-            Map<String, Long> results = redisCounterExecutor.batchIncrement(keyTtlMap);
-
-            Long countShort = results.get(keyShort);
-            Long countLong = results.get(keyLong);
-
-            log.debug("访问统计记录完成: bizType={}, bizKey={}, countShort={}, countLong={}", 
-                    bizType, bizKey, countShort, countLong);
-
-            return StatResult.of(countShort, countLong);
-            
-        } catch (RedisCounterException e) {
-            log.error("访问统计记录失败: bizType={}, bizKey={}, error={}", 
-                    bizType, bizKey, e.getMessage(), e);
-            
-            // 根据降级开关决定是否返回空结果
-            if (config.getFallbackEnabled()) {
-                log.warn("访问统计降级生效，返回空结果");
-                return StatResult.empty();
-            } else {
-                throw new RuntimeException("访问统计失败且降级未开启", e);
+        int maxRetries = config.getMaxRetries();
+        int attempt = 0;
+        
+        // 重试机制
+        while (attempt <= maxRetries) {
+            try {
+                return doRecordWithTimeout(bizType, bizKey, config);
+            } catch (TimeoutException e) {
+                attempt++;
+                log.warn("访问统计超时, 重试第 {}/{} 次: bizType={}, bizKey={}", 
+                        attempt, maxRetries, bizType, bizKey);
+            } catch (Exception e) {
+                attempt++;
+                log.warn("访问统计失败, 重试第 {}/{} 次: bizType={}, bizKey={}, error={}", 
+                        attempt, maxRetries, bizType, bizKey, e.getMessage());
             }
         }
+        
+        // 所有重试都失败，根据降级开关决定行为
+        log.error("访问统计所有重试均失败: bizType={}, bizKey={}", bizType, bizKey);
+        if (config.getFallbackEnabled()) {
+            log.warn("访问统计降级生效，返回空结果");
+            return StatResult.empty();
+        } else {
+            throw new RuntimeException("访问统计失败且降级未开启");
+        }
+    }
+    
+    /**
+     * 执行带超时控制的记录操作
+     */
+    private StatResult doRecordWithTimeout(String bizType, String bizKey, 
+            SchedulerProperties.StatConfig config) throws TimeoutException, ExecutionException, InterruptedException {
+        
+        CompletableFuture<StatResult> future = CompletableFuture.supplyAsync(
+                () -> doRecord(bizType, bizKey, config), executor);
+        
+        try {
+            // 使用配置的超时时间
+            return future.get(config.getRedisTimeout(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            throw e;
+        }
+    }
+    
+    /**
+     * 实际执行记录操作
+     */
+    private StatResult doRecord(String bizType, String bizKey, SchedulerProperties.StatConfig config) {
+        // 构建双窗口的 Redis Key
+        String keyShort = buildStatKey(bizType, bizKey, formatWindowKey(config.getShortWindowSeconds()));
+        String keyLong = buildStatKey(bizType, bizKey, config.getLongWindowSeconds() + "s");
+
+        // 计算过期时间（向上取整）
+        long ttlShort = (long) Math.ceil(config.getShortWindowSeconds());
+        long ttlLong = config.getLongWindowSeconds().longValue();
+
+        // 构建批量执行 Map
+        Map<String, Long> keyTtlMap = new LinkedHashMap<>();
+        keyTtlMap.put(keyShort, ttlShort);
+        keyTtlMap.put(keyLong, ttlLong);
+
+        // 批量执行（一次 Redis 调用）
+        Map<String, Long> results = redisCounterExecutor.batchIncrement(keyTtlMap);
+
+        Long countShort = results.get(keyShort);
+        Long countLong = results.get(keyLong);
+
+        log.debug("访问统计记录完成: bizType={}, bizKey={}, countShort={}, countLong={}", 
+                bizType, bizKey, countShort, countLong);
+
+        return StatResult.of(countShort, countLong);
     }
 
     /**

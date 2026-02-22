@@ -18,6 +18,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * 2. 多次访问累加
  * 3. 双窗口统计正确性
  * 4. 参数校验
+ * 
+ * 注意：
+ * - count1s 表示短窗口计数（当前配置为 1 秒）
+ * - count60s 表示长窗口计数（当前配置为 60 秒）
+ * - 字段名是固定的，实际窗口时长由配置文件决定
  */
 @SpringBootTest
 class RedisAccessStatisticsServiceTest {
@@ -35,8 +40,8 @@ class RedisAccessStatisticsServiceTest {
         StatResult result = statisticsService.record(bizType, bizKey);
 
         assertNotNull(result, "结果不应为null");
-        assertEquals(1L, result.getCount1s(), "1秒窗口计数应为1");
-        assertEquals(1L, result.getCount60s(), "60秒窗口计数应为1");
+        assertEquals(1L, result.getCount1s(), "短窗口计数应为1");
+        assertEquals(1L, result.getCount60s(), "长窗口计数应为1");
     }
 
     @Test
@@ -52,8 +57,8 @@ class RedisAccessStatisticsServiceTest {
         }
 
         assertNotNull(result);
-        assertEquals(5L, result.getCount1s(), "1秒窗口计数应为5");
-        assertEquals(5L, result.getCount60s(), "60秒窗口计数应为5");
+        assertEquals(5L, result.getCount1s(), "短窗口计数应为5");
+        assertEquals(5L, result.getCount60s(), "长窗口计数应为5");
     }
 
     @Test
@@ -120,7 +125,7 @@ class RedisAccessStatisticsServiceTest {
     }
 
     @Test
-    @DisplayName("测试1秒窗口过期")
+    @DisplayName("测试短窗口过期")
     void testWindowExpiration() throws InterruptedException {
         String bizType = "test";
         String bizKey = "expire_" + System.currentTimeMillis();
@@ -129,12 +134,12 @@ class RedisAccessStatisticsServiceTest {
         StatResult result1 = statisticsService.record(bizType, bizKey);
         assertEquals(1L, result1.getCount1s());
 
-        // 等待超过1秒
+        // 等待超过短窗口时间（1秒 + buffer）
         Thread.sleep(1100);
 
-        // 第二次记录 - 1秒窗口应重新计数
+        // 第二次记录 - 短窗口应重新计数
         StatResult result2 = statisticsService.record(bizType, bizKey);
-        assertEquals(1L, result2.getCount1s(), "1秒窗口过期后应重新从1开始");
-        assertEquals(2L, result2.getCount60s(), "60秒窗口应继续累加");
+        assertEquals(1L, result2.getCount1s(), "短窗口过期后应重新从1开始");
+        assertEquals(2L, result2.getCount60s(), "长窗口应继续累加");
     }
 }

@@ -143,17 +143,17 @@ public class SchedulerProperties {
         // ========== 时间窗口配置 ==========
         
         /**
-         * 短窗口时长（秒）
-         * 用于瞬时热点检测，默认 2 秒
-         * 支持小数配置（如：0.5 表示 500ms，适用于秒杀场景）
+         * 短窗口时长(秒)
+         * 用于瞬时热点检测,默认 1 秒
+         * 支持小数配置(如:0.5 表示 500ms,适用于秒杀场景)
          */
-        private Double shortWindowSeconds = 2.0;
+        private Double shortWindowSeconds = 1.0;
         
         /**
-         * 长窗口时长（秒）
-         * 用于稳定热度判断，默认 120 秒
+         * 长窗口时长(秒)
+         * 用于稳定热度判断,默认 60 秒
          */
-        private Integer longWindowSeconds = 120;
+        private Integer longWindowSeconds = 60;
         
         // ========== Redis 容错配置 ==========
         

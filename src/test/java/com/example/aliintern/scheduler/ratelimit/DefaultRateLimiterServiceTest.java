@@ -52,6 +52,8 @@ class DefaultRateLimiterServiceTest {
         lenient().when(rateLimitConfig.getWindowSeconds()).thenReturn(1L);
         lenient().when(rateLimitConfig.getKeyPrefix()).thenReturn("ratelimit");
         lenient().when(rateLimitConfig.getFailOpen()).thenReturn(true);
+        // 超时配置（新增）
+        lenient().when(rateLimitConfig.getRedisTimeout()).thenReturn(100);
 
         rateLimiterService = new DefaultRateLimiterService(redisCounterExecutor, schedulerProperties);
     }
